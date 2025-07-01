@@ -1,5 +1,7 @@
+import os
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import case
 from datetime import datetime, timedelta
 import threading
 import time
@@ -20,13 +22,42 @@ class Todo(db.Model):
     priority = db.Column(db.String(10), default='medium')  # high, medium, low
     category = db.Column(db.String(20), default='today')  # today, tomorrow, later
 
-# Create tables if they don't exist
+# Initialize database
 with app.app_context():
+    # Drop existing tables if they exist
+    db.drop_all()
+    # Create new tables
     db.create_all()
+    # Add some sample data
+    sample_todos = [
+        Todo(title="Complete project report", 
+             description="Finish writing and reviewing the project report", 
+             priority="high",
+             category="today"),
+        Todo(title="Team meeting", 
+             description="Prepare for tomorrow's team meeting", 
+             priority="medium",
+             category="tomorrow"),
+        Todo(title="Send email updates", 
+             description="Send weekly update emails to stakeholders", 
+             priority="low",
+             category="later")
+    ]
+    db.session.add_all(sample_todos)
+    db.session.commit()
 
 @app.route('/')
 def index():
-    todos = Todo.query.order_by(Todo.created_at.desc()).all()
+    # Get all todos ordered by category, priority, and creation date
+    todos = Todo.query.order_by(
+        case(
+            (Todo.category == 'today', 1),
+            (Todo.category == 'tomorrow', 2),
+            (Todo.category == 'later', 3)
+        ),
+        Todo.priority.desc(),
+        Todo.created_at.desc()
+    ).all()
     
     # Calculate statistics
     total_todos = len(todos)
@@ -47,28 +78,28 @@ def index():
                          pending_percent=pending_percent,
                          total_todos=total_todos)
 
-@app.route('/add_todo', methods=['POST'])
+@app.route('/add', methods=['POST'])
 def add_todo():
     title = request.form.get('title')
     description = request.form.get('description')
-    priority = request.form.get('priority', 'low')
-    reminder_str = request.form.get('reminder')
+    priority = request.form.get('priority', 'medium')
     category = request.form.get('category', 'today')
+    reminder = request.form.get('reminder')
     
-    reminder = None
-    if reminder_str:
-        reminder = datetime.strptime(reminder_str, '%Y-%m-%dT%H:%M')
+    if not title:
+        flash('Title is required!', 'error')
+        return redirect(url_for('index'))
     
     todo = Todo(
         title=title,
         description=description,
         priority=priority,
-        reminder=reminder,
-        category=category
+        category=category,
+        reminder=reminder and datetime.strptime(reminder, '%Y-%m-%dT%H:%M')
     )
     db.session.add(todo)
     db.session.commit()
-    
+    flash('Task added successfully!', 'success')
     return redirect(url_for('index'))
 
 @app.route('/toggle/<int:todo_id>')
@@ -124,4 +155,4 @@ if __name__ == '__main__':
         reminder_thread = threading.Thread(target=check_reminders, daemon=True)
         reminder_thread.start()
     
-    app.run(host='127.0.0.1', port=5003, debug=True)
+    app.run(host='127.0.0.1', port=5001, debug=True)
